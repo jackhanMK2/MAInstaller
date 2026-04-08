@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mobile App Installer</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="shortcut icon" href="/favicon.ico">
+<style>
+:root {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --surface2: #242836;
+  --border: #2e3348;
+  --text: #e4e6f0;
+  --text-dim: #8b8fa8;
+  --accent: #6c5ce7;
+  --accent-hover: #7f71ed;
+  --green: #00b894;
+  --red: #e17055;
+  --orange: #fdcb6e;
+  --android: #3ddc84;
+  --ios: #007aff;
+  --radius: 12px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+/* ── Header ── */
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 0 32px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 32px;
+}
+header h1 {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+}
+header h1 span { color: var(--accent); }
+.tool-status {
+  display: flex;
+  gap: 12px;
+}
+.tool-badge {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.tool-badge.ok { background: rgba(0,184,148,0.15); color: var(--green); }
+.tool-badge.missing { background: rgba(225,112,85,0.15); color: var(--red); }
+
+/* ── Grid ── */
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+@media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
+
+/* ── Card ── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+}
+.card-title {
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.card-title svg { width: 18px; height: 18px; opacity: 0.6; }
+
+/* ── Upload zone ── */
+.upload-zone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 40px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.upload-zone:hover, .upload-zone.dragover {
+  border-color: var(--accent);
+  background: rgba(108,92,231,0.06);
+}
+.upload-zone svg { width: 48px; height: 48px; color: var(--text-dim); margin-bottom: 12px; }
+.upload-zone p { color: var(--text-dim); font-size: 14px; margin-top: 4px; }
+.upload-zone .hint { font-size: 12px; color: var(--text-dim); opacity: 0.6; margin-top: 8px; }
+#file-input { display: none; }
+
+/* ── File list ── */
+.file-list { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface2);
+  padding: 12px 16px;
+  border-radius: 8px;
+  animation: fadeIn 0.2s;
+}
+.file-item .platform-icon {
+  width: 36px; height: 36px;
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700;
+  flex-shrink: 0;
+}
+.file-item .platform-icon.android { background: rgba(61,220,132,0.15); color: var(--android); }
+.file-item .platform-icon.ios { background: rgba(0,122,255,0.15); color: var(--ios); }
+.file-item .info { flex: 1; min-width: 0; }
+.file-item .info .name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-item .info .size { font-size: 11px; color: var(--text-dim); }
+.file-item .delete-btn {
+  background: none; border: none; color: var(--text-dim); cursor: pointer;
+  padding: 4px; border-radius: 4px; transition: all 0.15s;
+}
+.file-item .delete-btn:hover { color: var(--red); background: rgba(225,112,85,0.1); }
+
+/* ── Devices ── */
+.device-list { display: flex; flex-direction: column; gap: 8px; }
+.device-item {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--surface2);
+  padding: 12px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+  user-select: none;
+}
+.device-item:hover { background: #2c3040; }
+.device-item.selected { border: 1px solid var(--accent); background: rgba(108,92,231,0.08); }
+.device-item input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 16px; height: 16px;
+}
+.device-item .platform-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+}
+.device-item .platform-dot.android { background: var(--android); }
+.device-item .platform-dot.ios { background: var(--ios); }
+.device-item .dev-info { flex: 1; }
+.device-item .dev-info .dev-name { font-size: 13px; font-weight: 500; }
+.device-item .dev-info .dev-id { font-size: 11px; color: var(--text-dim); font-family: monospace; }
+.device-item .dev-status {
+  font-size: 11px; padding: 2px 8px;
+  border-radius: 10px; font-weight: 600;
+}
+.device-item .dev-status.connected { background: rgba(0,184,148,0.15); color: var(--green); }
+.device-item .dev-status.unauthorized { background: rgba(225,112,85,0.15); color: var(--red); }
+.device-item .dev-status.authorizing { background: rgba(253,203,110,0.15); color: var(--orange); }
+.device-item .dev-status.recovery { background: rgba(253,203,110,0.15); color: var(--orange); }
+.device-item .dev-status.unknown { background: rgba(139,143,168,0.15); color: var(--text-dim); }
+.device-item .dev-status.installing { background: rgba(253,203,110,0.15); color: var(--orange); }
+.device-item .dev-status.success { background: rgba(0,184,148,0.15); color: var(--green); }
+.device-item .dev-status.failed { background: rgba(225,112,85,0.15); color: var(--red); }
+.device-item.unauthorized { border: 1px solid rgba(225,112,85,0.3); }
+.device-hint {
+  width: 100%;
+  font-size: 11px;
+  color: var(--orange);
+  margin-top: 6px;
+  padding-left: 28px;
+}
+
+.no-devices {
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.device-actions {
+  display: flex; gap: 8px; margin-top: 12px;
+}
+.refresh-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.15s;
+  display: flex; align-items: center; gap: 6px;
+}
+.refresh-btn:hover { background: #2c3040; }
+.refresh-btn.spinning svg { animation: spin 0.8s linear infinite; }
+.select-all-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.15s;
+}
+.select-all-btn:hover { color: var(--text); border-color: var(--accent); }
+
+/* ── Install section ── */
+.install-section {
+  grid-column: 1 / -1;
+}
+.install-controls {
+  display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+}
+.file-select {
+  flex: 1; min-width: 200px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  appearance: none;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%238b8fa8' viewBox='0 0 16 16'%3E%3Cpath d='M4.646 5.646a.5.5 0 0 1 .708 0L8 8.293l2.646-2.647a.5.5 0 0 1 .708.708l-3 3a.5.5 0 0 1-.708 0l-3-3a.5.5 0 0 1 0-.708z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 36px;
+}
+.file-select option { background: var(--surface); }
+
+.install-btn {
+  padding: 12px 32px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex; align-items: center; gap: 8px;
+}
+.install-selected {
+  background: var(--accent);
+  color: white;
+}
+.install-selected:hover:not(:disabled) { background: var(--accent-hover); }
+.install-all {
+  background: linear-gradient(135deg, var(--accent), #a29bfe);
+  color: white;
+}
+.install-all:hover:not(:disabled) { background: linear-gradient(135deg, var(--accent-hover), #b4adf8); }
+.install-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.clean-install-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+.clean-install-toggle:hover { border-color: var(--red); background: rgba(225,112,85,0.06); }
+.clean-install-toggle:has(input:checked) { border-color: var(--red); background: rgba(225,112,85,0.1); }
+.clean-install-toggle input { display: none; }
+.toggle-slider {
+  width: 36px; height: 20px;
+  background: var(--border);
+  border-radius: 10px;
+  position: relative;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.toggle-slider::after {
+  content: '';
+  position: absolute;
+  width: 16px; height: 16px;
+  background: white;
+  border-radius: 50%;
+  top: 2px; left: 2px;
+  transition: transform 0.2s;
+}
+.clean-install-toggle input:checked + .toggle-slider { background: var(--red); }
+.clean-install-toggle input:checked + .toggle-slider::after { transform: translateX(16px); }
+.toggle-label { font-size: 13px; font-weight: 500; color: var(--text-dim); }
+.clean-install-toggle input:checked ~ .toggle-label { color: var(--red); }
+
+/* ── Log ── */
+.log-section { grid-column: 1 / -1; }
+.log-panel {
+  background: #0d0f15;
+  border-radius: 8px;
+  padding: 16px;
+  max-height: 300px;
+  overflow-y: auto;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.log-entry { padding: 2px 0; }
+.log-entry .time { color: var(--text-dim); margin-right: 8px; }
+.log-entry.info { color: var(--text); }
+.log-entry.success { color: var(--green); }
+.log-entry.error { color: var(--red); }
+.log-entry.warn { color: var(--orange); }
+
+/* ── Animations ── */
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Connected indicator ── */
+.ws-indicator {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.ws-indicator.connected { background: var(--green); }
+.ws-indicator.disconnected { background: var(--red); }
+
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <h1><span>Mobile</span> App Installer</h1>
+    <div class="tool-status" id="tool-status"></div>
+  </header>
+
+  <div class="grid">
+
+    <!-- Upload Card -->
+    <div class="card">
+      <div class="card-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        설치 파일 등록
+      </div>
+      <div class="upload-zone" id="upload-zone">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M12 8v8m-4-4h8"/></svg>
+        <p>APK 또는 IPA 파일을 드래그하거나 클릭하여 등록</p>
+        <div class="hint">.apk (Android) / .ipa (iOS)</div>
+      </div>
+      <input type="file" id="file-input" accept=".apk,.ipa" multiple>
+      <div class="file-list" id="file-list"></div>
+    </div>
+
+    <!-- Device Card -->
+    <div class="card">
+      <div class="card-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12" y2="18.01"/></svg>
+        연결된 디바이스
+        <span class="ws-indicator disconnected" id="ws-indicator" title="WebSocket"></span>
+      </div>
+      <div class="device-list" id="device-list">
+        <div class="no-devices">디바이스를 검색하려면 새로고침을 클릭하세요</div>
+      </div>
+      <div class="device-actions">
+        <button class="refresh-btn" id="refresh-btn" onclick="refreshDevices()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          새로고침
+        </button>
+        <button class="select-all-btn" onclick="toggleSelectAll()">전체 선택</button>
+      </div>
+    </div>
+
+    <!-- Install Section -->
+    <div class="card install-section">
+      <div class="card-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        설치
+      </div>
+      <div class="install-controls">
+        <select class="file-select" id="file-select">
+          <option value="">-- 설치할 파일 선택 --</option>
+        </select>
+        <label class="clean-install-toggle" title="체크 시 기존 앱을 삭제한 뒤 새로 설치합니다 (데이터 초기화)">
+          <input type="checkbox" id="clean-install-check">
+          <span class="toggle-slider"></span>
+          <span class="toggle-label">삭제 후 재설치</span>
+        </label>
+        <button class="install-btn install-selected" id="btn-install-selected" onclick="installSelected()" disabled>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          선택 디바이스 설치
+        </button>
+        <button class="install-btn install-all" id="btn-install-all" onclick="installAll()" disabled>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          전체 디바이스 설치
+        </button>
+      </div>
+    </div>
+
+    <!-- Log -->
+    <div class="card log-section">
+      <div class="card-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        로그
+      </div>
+      <div class="log-panel" id="log-panel"></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const state = {
+  files: {},
+  devices: [],
+  selectedDevices: new Set(),
+  ws: null,
+  installing: false,
+};
+
+// ── Logging ──
+function log(msg, level = 'info') {
+  const panel = document.getElementById('log-panel');
+  const now = new Date().toLocaleTimeString('ko-KR', { hour12: false });
+  const div = document.createElement('div');
+  div.className = `log-entry ${level}`;
+  div.innerHTML = `<span class="time">[${now}]</span> ${msg}`;
+  panel.appendChild(div);
+  panel.scrollTop = panel.scrollHeight;
+}
+
+// ── WebSocket ──
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  state.ws = new WebSocket(`${proto}://${location.host}/ws`);
+  state.ws.onopen = () => {
+    document.getElementById('ws-indicator').className = 'ws-indicator connected';
+    log('WebSocket 연결됨', 'success');
+  };
+  state.ws.onclose = () => {
+    document.getElementById('ws-indicator').className = 'ws-indicator disconnected';
+    setTimeout(connectWS, 3000);
+  };
+  state.ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    handleWSMessage(data);
+  };
+}
+
+function handleWSMessage(data) {
+  if (data.type === 'install_start') {
+    const mode = data.mode ? ` [${data.mode}]` : '';
+    log(`📦 <b>${data.file}</b> → ${data.device_count}대 디바이스에 설치 시작${mode}`, 'warn');
+  } else if (data.type === 'install_status') {
+    const el = document.querySelector(`.device-item[data-id="${data.device_id}"] .dev-status`);
+    if (el) {
+      el.className = `dev-status ${data.status}`;
+      el.textContent = data.status === 'installing' ? '설치 중' :
+                       data.status === 'success' ? '완료' : '실패';
+    }
+    if (data.status === 'success') {
+      log(`✅ ${data.device_name}: 설치 완료`, 'success');
+    } else if (data.status === 'failed') {
+      log(`❌ ${data.device_name}: ${data.message}`, 'error');
+    }
+  } else if (data.type === 'install_done') {
+    log(`📊 설치 완료: 성공 ${data.success} / 실패 ${data.failed} / 전체 ${data.total}`,
+        data.failed > 0 ? 'warn' : 'success');
+    state.installing = false;
+    updateButtons();
+  }
+}
+
+// ── Tool status ──
+async function loadToolStatus() {
+  const res = await fetch('/api/tools');
+  const tools = await res.json();
+  const container = document.getElementById('tool-status');
+  container.innerHTML = '';
+  for (const [name, val] of Object.entries(tools)) {
+    const ok = val !== 'not found';
+    const badge = document.createElement('span');
+    badge.className = `tool-badge ${ok ? 'ok' : 'missing'}`;
+    const label = name === 'adb' ? 'Android (adb)' : name === 'tidevice' ? 'iOS (tidevice)' : name;
+    badge.textContent = `${label}: ${ok ? 'OK' : 'N/A'}`;
+    container.appendChild(badge);
+  }
+}
+
+// ── Upload ──
+const uploadZone = document.getElementById('upload-zone');
+const fileInput = document.getElementById('file-input');
+
+uploadZone.addEventListener('click', () => fileInput.click());
+uploadZone.addEventListener('dragover', (e) => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+uploadZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  uploadZone.classList.remove('dragover');
+  handleFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', () => handleFiles(fileInput.files));
+
+async function handleFiles(files) {
+  for (const file of files) {
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (!['apk', 'ipa'].includes(ext)) {
+      log(`⚠️ ${file.name}: 지원하지 않는 파일 형식`, 'error');
+      continue;
+    }
+    const fd = new FormData();
+    fd.append('file', file);
+    log(`⬆️ ${file.name} 업로드 중...`);
+    try {
+      const res = await fetch('/api/upload', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.error) {
+        log(`❌ ${file.name}: ${data.error}`, 'error');
+      } else {
+        state.files[data.id] = data;
+        renderFiles();
+        log(`✅ ${data.name} (${data.size}) 등록 완료`, 'success');
+      }
+    } catch (err) {
+      log(`❌ 업로드 실패: ${err.message}`, 'error');
+    }
+  }
+}
+
+function renderFiles() {
+  const container = document.getElementById('file-list');
+  const select = document.getElementById('file-select');
+  container.innerHTML = '';
+  select.innerHTML = '<option value="">-- 설치할 파일 선택 --</option>';
+
+  for (const f of Object.values(state.files)) {
+    const div = document.createElement('div');
+    div.className = 'file-item';
+    div.innerHTML = `
+      <div class="platform-icon ${f.platform}">${f.ext.toUpperCase().replace('.','')}</div>
+      <div class="info">
+        <div class="name" title="${f.name}">${f.name}</div>
+        <div class="size">${f.size} · ${f.platform === 'android' ? 'Android' : 'iOS'}${f.package ? ' · ' + f.package : ''}</div>
+      </div>
+      <button class="delete-btn" onclick="deleteFile('${f.id}')" title="삭제">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    `;
+    container.appendChild(div);
+
+    const opt = document.createElement('option');
+    opt.value = f.id;
+    opt.textContent = `${f.name} (${f.platform === 'android' ? 'Android' : 'iOS'})`;
+    select.appendChild(opt);
+  }
+  updateButtons();
+}
+
+async function deleteFile(id) {
+  await fetch(`/api/files/${id}`, { method: 'DELETE' });
+  delete state.files[id];
+  renderFiles();
+  log('🗑️ 파일 삭제됨');
+}
+
+// ── Devices ──
+async function refreshDevices() {
+  const btn = document.getElementById('refresh-btn');
+  btn.classList.add('spinning');
+  btn.disabled = true;
+  log('🔍 디바이스 검색 중...');
+
+  try {
+    const res = await fetch('/api/devices');
+    state.devices = await res.json();
+    state.selectedDevices.clear();
+    renderDevices();
+    if (state.devices.length === 0) {
+      log('⚠️ 연결된 디바이스가 없습니다', 'warn');
+    } else {
+      const unauth = state.devices.filter(d => d.status === 'unauthorized');
+      const ready = state.devices.filter(d => d.status === 'connected');
+      log(`📱 ${state.devices.length}대 디바이스 발견 (연결됨: ${ready.length}, 승인 필요: ${unauth.length})`, unauth.length > 0 ? 'warn' : 'success');
+      if (unauth.length > 0) {
+        log('⚠️ "승인 필요" 디바이스: 폰 화면에서 "USB 디버깅 허용" 팝업을 승인하세요', 'warn');
+      }
+    }
+  } catch (err) {
+    log(`❌ 디바이스 검색 실패: ${err.message}`, 'error');
+  } finally {
+    btn.classList.remove('spinning');
+    btn.disabled = false;
+  }
+}
+
+function getStatusDisplay(status) {
+  const map = {
+    connected:    { label: '연결됨', cls: 'connected' },
+    unauthorized: { label: '승인 필요', cls: 'unauthorized' },
+    authorizing:  { label: '승인 중', cls: 'authorizing' },
+    recovery:     { label: '복구 모드', cls: 'recovery' },
+    sideload:     { label: '사이드로드', cls: 'recovery' },
+  };
+  return map[status] || { label: status, cls: 'unknown' };
+}
+
+function renderDevices() {
+  const container = document.getElementById('device-list');
+  if (state.devices.length === 0) {
+    container.innerHTML = '<div class="no-devices">연결된 디바이스가 없습니다.<br>USB로 디바이스를 연결한 후 새로고침하세요.</div>';
+    updateButtons();
+    return;
+  }
+  container.innerHTML = '';
+  for (const d of state.devices) {
+    const st = getStatusDisplay(d.status);
+    const isUnauth = d.status === 'unauthorized';
+    const div = document.createElement('div');
+    div.className = `device-item${state.selectedDevices.has(d.id) ? ' selected' : ''}${isUnauth ? ' unauthorized' : ''}`;
+    div.dataset.id = d.id;
+    div.onclick = () => toggleDevice(d.id);
+    div.innerHTML = `
+      <input type="checkbox" ${state.selectedDevices.has(d.id) ? 'checked' : ''} onclick="event.stopPropagation(); toggleDevice('${d.id}')">
+      <div class="platform-dot ${d.platform}"></div>
+      <div class="dev-info">
+        <div class="dev-name">${d.name}${d.model ? ' (' + d.model + ')' : ''}</div>
+        <div class="dev-id">${d.id}${d.storage_free ? ` · 여유 <b>${d.storage_free}</b> / ${d.storage_total}` : ''}</div>
+      </div>
+      <span class="dev-status ${st.cls}">${st.label}</span>
+    `;
+    container.appendChild(div);
+    if (isUnauth) {
+      const hint = document.createElement('div');
+      hint.className = 'device-hint';
+      hint.textContent = '📱 디바이스 화면에서 "USB 디버깅 허용"을 승인하세요';
+      div.appendChild(hint);
+    }
+  }
+  updateButtons();
+}
+
+function toggleDevice(id) {
+  if (state.selectedDevices.has(id)) {
+    state.selectedDevices.delete(id);
+  } else {
+    state.selectedDevices.add(id);
+  }
+  renderDevices();
+}
+
+function toggleSelectAll() {
+  if (state.selectedDevices.size === state.devices.length) {
+    state.selectedDevices.clear();
+  } else {
+    state.devices.forEach(d => state.selectedDevices.add(d.id));
+  }
+  renderDevices();
+}
+
+// ── Install ──
+function updateButtons() {
+  const fileId = document.getElementById('file-select').value;
+  const hasFile = !!fileId;
+  const hasDevices = state.devices.length > 0;
+  const hasSelected = state.selectedDevices.size > 0;
+
+  document.getElementById('btn-install-selected').disabled = !hasFile || !hasSelected || state.installing;
+  document.getElementById('btn-install-all').disabled = !hasFile || !hasDevices || state.installing;
+}
+document.getElementById('file-select').addEventListener('change', updateButtons);
+
+function isCleanInstall() {
+  return document.getElementById('clean-install-check').checked;
+}
+
+async function installSelected() {
+  const fileId = document.getElementById('file-select').value;
+  if (!fileId || state.selectedDevices.size === 0) return;
+  state.installing = true;
+  updateButtons();
+
+  try {
+    const res = await fetch('/api/install', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file_id: fileId,
+        device_ids: [...state.selectedDevices],
+        install_all: false,
+        clean_install: isCleanInstall(),
+      }),
+    });
+    const data = await res.json();
+    if (data.error) log(`❌ ${data.error}`, 'error');
+  } catch (err) {
+    log(`❌ 설치 요청 실패: ${err.message}`, 'error');
+  } finally {
+    state.installing = false;
+    updateButtons();
+  }
+}
+
+async function installAll() {
+  const fileId = document.getElementById('file-select').value;
+  if (!fileId) return;
+  state.installing = true;
+  updateButtons();
+
+  try {
+    const res = await fetch('/api/install', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file_id: fileId,
+        install_all: true,
+        clean_install: isCleanInstall(),
+      }),
+    });
+    const data = await res.json();
+    if (data.error) log(`❌ ${data.error}`, 'error');
+  } catch (err) {
+    log(`❌ 설치 요청 실패: ${err.message}`, 'error');
+  } finally {
+    state.installing = false;
+    updateButtons();
+  }
+}
+
+// ── Init ──
+connectWS();
+loadToolStatus();
+log('🚀 Mobile App Installer 시작됨');
+</script>
+</body>
+</html>
