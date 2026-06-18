@@ -437,15 +437,30 @@ class DeviceManager:
 
     # ── iOS uninstall + install ──
 
-    def _uninstall_ios(self, device_id: str, bundle_id: str) -> tuple[bool, str]:
-        if not self._tidevice_available or not bundle_id:
-            return False, "tidevice 없음 또는 번들 ID 없음"
+    def _ios_bundle_id(self, ipa_path: str) -> Optional[str]:
+        """IPA 번들 ID 추출: 자체 파서 → tidevice IPAReader 폴백"""
+        bundle_id = get_ipa_bundle_id(ipa_path)
+        if bundle_id:
+            return bundle_id
         try:
-            from tidevice._usbmux import Usbmux
-            from tidevice._device import BaseDevice
-            um = Usbmux()
-            dev = BaseDevice(device_id, um)
-            dev.app_uninstall(bundle_id)
+            from tidevice._ipautil import IPAReader
+            ir = IPAReader(ipa_path)
+            bundle_id = ir.get_bundle_id()
+            ir.close()
+            return bundle_id
+        except Exception:
+            return None
+
+    def _uninstall_ios(self, dev, bundle_id: str) -> tuple[bool, str]:
+        """앱이 설치되어 있으면 삭제하고 제거를 검증"""
+        try:
+            installed_before = dev.installation.lookup(bundle_id) is not None
+            if not installed_before:
+                return True, "기존 설치 없음"
+            ok = dev.installation.uninstall(bundle_id)
+            still_installed = dev.installation.lookup(bundle_id) is not None
+            if still_installed:
+                return False, "삭제 실패 (앱이 여전히 설치되어 있음)"
             return True, "삭제 완료"
         except Exception as e:
             return False, str(e)
@@ -455,20 +470,37 @@ class DeviceManager:
             return InstallResult(device_id, InstallStatus.FAILED,
                                  "tidevice가 설치되지 않았습니다 (pip install tidevice)")
 
-        bundle_id = get_ipa_bundle_id(ipa_path)
-
-        if clean and bundle_id:
-            self._uninstall_ios(device_id, bundle_id)
+        bundle_id = self._ios_bundle_id(ipa_path)
 
         try:
             from tidevice._usbmux import Usbmux
             from tidevice._device import BaseDevice
             um = Usbmux()
             dev = BaseDevice(device_id, um)
+
+            uninstall_note = ""
+            if clean:
+                if not bundle_id:
+                    return InstallResult(
+                        device_id, InstallStatus.FAILED,
+                        "삭제 후 재설치 실패: IPA에서 번들 ID를 추출할 수 없습니다",
+                    )
+                ok, note = self._uninstall_ios(dev, bundle_id)
+                if not ok:
+                    return InstallResult(
+                        device_id, InstallStatus.FAILED,
+                        f"기존 앱 삭제 실패로 중단: {note}",
+                    )
+                uninstall_note = note
+
             dev.app_install(ipa_path)
-            mode = "삭제 후 설치 완료" if clean else "설치 완료"
-            return InstallResult(device_id, InstallStatus.SUCCESS,
-                                 f"{mode}{' (' + bundle_id + ')' if bundle_id else ''}")
+
+            if clean:
+                detail = f" ({bundle_id})" if bundle_id else ""
+                return InstallResult(device_id, InstallStatus.SUCCESS,
+                                     f"삭제 후 설치 완료{detail} — {uninstall_note}")
+            detail = f" ({bundle_id})" if bundle_id else ""
+            return InstallResult(device_id, InstallStatus.SUCCESS, f"설치 완료{detail}")
         except Exception as e:
             return InstallResult(device_id, InstallStatus.FAILED, str(e))
 
