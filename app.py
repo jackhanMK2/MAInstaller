@@ -1,8 +1,10 @@
 import sys
 import os
+import re
 import uuid
 import json
 import asyncio
+from datetime import datetime
 from pathlib import Path
 from dataclasses import asdict
 
@@ -30,6 +32,7 @@ BASE_DIR = _get_base_dir()
 RESOURCE_DIR = _get_resource_dir()
 UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
+MEDIA_DIR = BASE_DIR / "media"
 
 templates = Jinja2Templates(directory=str(RESOURCE_DIR / "templates"))
 dm = DeviceManager()
@@ -83,6 +86,72 @@ async def tool_status():
 async def list_devices():
     devices = dm.get_all_devices()
     return [asdict(d) for d in devices]
+
+
+# ── API: Pull media (screenshots & recordings) ──
+
+def _safe_name(name: str) -> str:
+    name = re.sub(r"\s+", "_", name.strip())
+    return re.sub(r"[^\w가-힣.\-]+", "", name) or "device"
+
+
+@app.post("/api/pull-media")
+async def pull_media(body: dict):
+    device_id = body.get("device_id")
+    devices = dm.get_all_devices()
+    device = next((d for d in devices if d.id == device_id), None)
+    if not device:
+        return JSONResponse({"error": "디바이스를 찾을 수 없습니다."}, status_code=404)
+    if device.status != "connected":
+        return JSONResponse({"error": "연결된(승인된) 디바이스만 가져올 수 있습니다."}, status_code=400)
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    dest = MEDIA_DIR / f"{_safe_name(device.name)}_{ts}"
+
+    await broadcast({
+        "type": "media_start",
+        "device_id": device.id,
+        "device_name": device.name,
+    })
+
+    loop = asyncio.get_running_loop()
+
+    def _progress(msg: str):
+        asyncio.run_coroutine_threadsafe(
+            broadcast({
+                "type": "media_progress",
+                "device_id": device.id,
+                "device_name": device.name,
+                "message": msg,
+            }),
+            loop,
+        )
+
+    result = await asyncio.to_thread(dm.pull_media, device, str(dest), _progress)
+
+    if result.get("ok"):
+        await broadcast({
+            "type": "media_done",
+            "device_id": device.id,
+            "device_name": device.name,
+            "count": result.get("count", 0),
+            "path": result.get("path", ""),
+            "note": result.get("note", ""),
+        })
+        if result.get("count", 0) > 0 and sys.platform == "win32":
+            try:
+                os.startfile(result["path"])  # noqa: S606
+            except Exception:
+                pass
+    else:
+        await broadcast({
+            "type": "media_error",
+            "device_id": device.id,
+            "device_name": device.name,
+            "message": result.get("error", "알 수 없는 오류"),
+        })
+
+    return result
 
 
 # ── API: Upload file ──

@@ -41,6 +41,13 @@ class InstallResult:
     message: str = ""
 
 
+# ── Media file types ──
+
+MEDIA_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".heic", ".gif", ".webp", ".bmp"}
+MEDIA_VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".3gp", ".mkv", ".avi"}
+MEDIA_EXTS = MEDIA_IMAGE_EXTS | MEDIA_VIDEO_EXTS
+
+
 # ── APK package name extraction (no aapt needed) ──
 
 def get_apk_package_name(apk_path: str) -> Optional[str]:
@@ -521,3 +528,118 @@ class DeviceManager:
     async def install_to_multiple(self, devices: list[Device], file_path: str, clean: bool = False) -> list[InstallResult]:
         tasks = [self.install_to_device(d, file_path, clean) for d in devices]
         return await asyncio.gather(*tasks)
+
+    # ── Media pull (screenshots & recordings) ──
+
+    _ANDROID_MEDIA_DIRS = [
+        "/sdcard/Pictures/Screenshots",
+        "/sdcard/DCIM/Screenshots",
+        "/sdcard/DCIM/Screen recordings",
+        "/sdcard/Movies/Screen recordings",
+        "/sdcard/Pictures/Screen recordings",
+        "/sdcard/Movies/Screenshots",
+    ]
+
+    def pull_media(self, device: Device, dest_root: str, progress=None) -> dict:
+        """디바이스의 스크린샷/녹화영상을 dest_root로 복사"""
+        if device.platform == Platform.ANDROID:
+            return self._pull_android_media(device.id, dest_root, progress)
+        return self._pull_ios_media(device.id, dest_root, progress)
+
+    def _adb_dir_exists(self, device_id: str, path: str) -> bool:
+        try:
+            r = _run_sync([self._adb_path, "-s", device_id, "shell", "ls", "-d", path], timeout=10)
+            out = (r.stdout + r.stderr)
+            return r.returncode == 0 and "No such file" not in out and "not found" not in out.lower()
+        except Exception:
+            return False
+
+    def _pull_android_media(self, device_id: str, dest_root: str, progress=None) -> dict:
+        if not self._adb_path:
+            return {"ok": False, "error": "adb를 찾을 수 없습니다", "count": 0}
+
+        dest = Path(dest_root)
+        dest.mkdir(parents=True, exist_ok=True)
+        found_dirs = 0
+
+        for rdir in self._ANDROID_MEDIA_DIRS:
+            if not self._adb_dir_exists(device_id, rdir):
+                continue
+            found_dirs += 1
+            if progress:
+                progress(f"{rdir} 복사 중...")
+            try:
+                _run_sync(
+                    [self._adb_path, "-s", device_id, "pull", "-a", rdir, str(dest)],
+                    timeout=1800,
+                )
+            except Exception:
+                pass
+
+        count = self._count_media_files(dest)
+        if found_dirs == 0:
+            return {"ok": True, "count": 0, "path": str(dest),
+                    "note": "스크린샷/녹화영상 폴더를 찾지 못했습니다"}
+        return {"ok": True, "count": count, "path": str(dest)}
+
+    def _pull_ios_media(self, device_id: str, dest_root: str, progress=None) -> dict:
+        if not self._tidevice_available:
+            return {"ok": False, "error": "tidevice가 설치되지 않았습니다", "count": 0}
+
+        dest = Path(dest_root)
+        dest.mkdir(parents=True, exist_ok=True)
+        try:
+            from tidevice._usbmux import Usbmux
+            from tidevice._device import BaseDevice
+            um = Usbmux()
+            dev = BaseDevice(device_id, um)
+            sync = dev.sync
+        except Exception as e:
+            return {"ok": False, "error": f"디바이스 연결 실패: {e}", "count": 0}
+
+        counter = {"n": 0}
+        try:
+            self._ios_pull_dir(sync, "/DCIM", dest, counter, progress)
+        except Exception as e:
+            if counter["n"] == 0:
+                return {"ok": False, "error": str(e), "count": 0}
+        return {"ok": True, "count": counter["n"], "path": str(dest)}
+
+    def _ios_pull_dir(self, sync, remote_dir: str, local_dir: Path, counter: dict, progress=None):
+        try:
+            names = sync.listdir(remote_dir)
+        except Exception:
+            return
+        for name in names:
+            rpath = remote_dir.rstrip("/") + "/" + name
+            try:
+                info = sync.stat(rpath)
+            except Exception:
+                continue
+            if info.is_dir():
+                self._ios_pull_dir(sync, rpath, local_dir / name, counter, progress)
+            else:
+                if Path(name).suffix.lower() not in MEDIA_EXTS:
+                    continue
+                local_dir.mkdir(parents=True, exist_ok=True)
+                lpath = local_dir / name
+                try:
+                    with open(lpath, "wb") as f:
+                        for chunk in sync.iter_content(rpath):
+                            f.write(chunk)
+                    counter["n"] += 1
+                    if progress and counter["n"] % 10 == 0:
+                        progress(f"{counter['n']}개 복사됨...")
+                except Exception:
+                    try:
+                        lpath.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+
+    @staticmethod
+    def _count_media_files(root: Path) -> int:
+        count = 0
+        for p in root.rglob("*"):
+            if p.is_file() and p.suffix.lower() in MEDIA_EXTS:
+                count += 1
+        return count

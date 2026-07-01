@@ -12,6 +12,9 @@ dist/
 # Uploads (user data)
 uploads/
 
+# Pulled media (user data)
+media/
+
 # App profile (browser app mode)
 .app_profile/
 

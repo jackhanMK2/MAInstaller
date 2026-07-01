@@ -181,6 +181,22 @@ header h1 span { color: var(--accent); }
 .device-item .dev-status.success { background: rgba(0,184,148,0.15); color: var(--green); }
 .device-item .dev-status.failed { background: rgba(225,112,85,0.15); color: var(--red); }
 .device-item.unauthorized { border: 1px solid rgba(225,112,85,0.3); }
+.device-item .dev-media-btn {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.device-item .dev-media-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: rgba(108,92,231,0.12);
+}
+.device-item .dev-media-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .device-hint {
   width: 100%;
   font-size: 11px;
@@ -484,7 +500,31 @@ function handleWSMessage(data) {
         data.failed > 0 ? 'warn' : 'success');
     state.installing = false;
     updateButtons();
+  } else if (data.type === 'media_start') {
+    log(`📥 ${data.device_name}: 미디어 가져오기 시작...`, 'warn');
+    setMediaBtnState(data.device_id, true, '가져오는 중...');
+  } else if (data.type === 'media_progress') {
+    setMediaBtnState(data.device_id, true, '가져오는 중...');
+    log(`⏳ ${data.device_name}: ${data.message}`, 'warn');
+  } else if (data.type === 'media_done') {
+    if (data.count > 0) {
+      log(`✅ ${data.device_name}: ${data.count}개 파일 복사 완료 → ${data.path}`, 'success');
+    } else {
+      const note = data.note ? ` (${data.note})` : '';
+      log(`ℹ️ ${data.device_name}: 복사할 미디어가 없습니다${note}`, 'warn');
+    }
+    setMediaBtnState(data.device_id, false);
+  } else if (data.type === 'media_error') {
+    log(`❌ ${data.device_name}: 미디어 가져오기 실패 — ${data.message}`, 'error');
+    setMediaBtnState(data.device_id, false);
   }
+}
+
+function setMediaBtnState(deviceId, busy, label) {
+  const btn = document.querySelector(`.device-item[data-id="${deviceId}"] .dev-media-btn`);
+  if (!btn) return;
+  btn.disabled = busy;
+  btn.textContent = busy ? (label || '가져오는 중...') : '📥 미디어';
 }
 
 // ── Tool status ──
@@ -635,6 +675,9 @@ function renderDevices() {
     div.className = `device-item${state.selectedDevices.has(d.id) ? ' selected' : ''}${isUnauth ? ' unauthorized' : ''}`;
     div.dataset.id = d.id;
     div.onclick = () => toggleDevice(d.id);
+    const mediaBtn = d.status === 'connected'
+      ? `<button class="dev-media-btn" title="스크린샷/녹화영상을 PC로 복사" onclick="event.stopPropagation(); pullMedia('${d.id}')">📥 미디어</button>`
+      : '';
     div.innerHTML = `
       <input type="checkbox" ${state.selectedDevices.has(d.id) ? 'checked' : ''} onclick="event.stopPropagation(); toggleDevice('${d.id}')">
       <div class="platform-dot ${d.platform}"></div>
@@ -642,6 +685,7 @@ function renderDevices() {
         <div class="dev-name">${d.name}${d.model ? ' (' + d.model + ')' : ''}</div>
         <div class="dev-id">${d.id}${d.storage_free ? ` · 여유 <b>${d.storage_free}</b> / ${d.storage_total}` : ''}</div>
       </div>
+      ${mediaBtn}
       <span class="dev-status ${st.cls}">${st.label}</span>
     `;
     container.appendChild(div);
@@ -662,6 +706,25 @@ function toggleDevice(id) {
     state.selectedDevices.add(id);
   }
   renderDevices();
+}
+
+async function pullMedia(id) {
+  setMediaBtnState(id, true, '가져오는 중...');
+  try {
+    const res = await fetch('/api/pull-media', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_id: id }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      log(`❌ 미디어 가져오기 실패: ${data.error}`, 'error');
+      setMediaBtnState(id, false);
+    }
+  } catch (err) {
+    log(`❌ 미디어 가져오기 요청 실패: ${err.message}`, 'error');
+    setMediaBtnState(id, false);
+  }
 }
 
 function toggleSelectAll() {
