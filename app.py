@@ -1,10 +1,8 @@
 import sys
 import os
-import re
 import uuid
 import json
 import asyncio
-from datetime import datetime
 from pathlib import Path
 from dataclasses import asdict
 
@@ -32,7 +30,6 @@ BASE_DIR = _get_base_dir()
 RESOURCE_DIR = _get_resource_dir()
 UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
-MEDIA_DIR = BASE_DIR / "media"
 
 templates = Jinja2Templates(directory=str(RESOURCE_DIR / "templates"))
 dm = DeviceManager()
@@ -88,11 +85,23 @@ async def list_devices():
     return [asdict(d) for d in devices]
 
 
-# ── API: Pull media (screenshots & recordings) ──
+# ── API: Pull media (latest screenshot & recording → Downloads) ──
 
-def _safe_name(name: str) -> str:
-    name = re.sub(r"\s+", "_", name.strip())
-    return re.sub(r"[^\w가-힣.\-]+", "", name) or "device"
+def _downloads_dir() -> Path:
+    """사용자 다운로드 폴더 경로 (Windows는 알려진 폴더 레지스트리 우선)"""
+    if sys.platform == "win32":
+        try:
+            import winreg
+            key = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as k:
+                val, _ = winreg.QueryValueEx(k, "{374DE290-123F-4565-9164-39C4925E467B}")
+                p = Path(os.path.expandvars(val))
+                if p.is_dir():
+                    return p
+        except Exception:
+            pass
+    p = Path.home() / "Downloads"
+    return p if p.is_dir() else Path.home()
 
 
 @app.post("/api/pull-media")
@@ -105,8 +114,7 @@ async def pull_media(body: dict):
     if device.status != "connected":
         return JSONResponse({"error": "연결된(승인된) 디바이스만 가져올 수 있습니다."}, status_code=400)
 
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    dest = MEDIA_DIR / f"{_safe_name(device.name)}_{ts}"
+    dest = _downloads_dir()
 
     await broadcast({
         "type": "media_start",
@@ -136,7 +144,8 @@ async def pull_media(body: dict):
             "device_name": device.name,
             "count": result.get("count", 0),
             "path": result.get("path", ""),
-            "note": result.get("note", ""),
+            "screenshot": result.get("screenshot"),
+            "recording": result.get("recording"),
         })
         if result.get("count", 0) > 0 and sys.platform == "win32":
             try:

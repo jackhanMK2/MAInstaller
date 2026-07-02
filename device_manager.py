@@ -238,6 +238,11 @@ def _run_sync(cmd: list[str], timeout: int = 30) -> subprocess.CompletedProcess:
     )
 
 
+def _safe_prefix(name: str) -> str:
+    name = re.sub(r"\s+", "_", name.strip())
+    return re.sub(r"[^\w가-힣.\-]+", "", name)
+
+
 class DeviceManager:
     def __init__(self):
         self._adb_path: Optional[str] = shutil.which("adb")
@@ -529,22 +534,41 @@ class DeviceManager:
         tasks = [self.install_to_device(d, file_path, clean) for d in devices]
         return await asyncio.gather(*tasks)
 
-    # ── Media pull (screenshots & recordings) ──
+    # ── Media pull (latest screenshot & recording → Downloads) ──
 
-    _ANDROID_MEDIA_DIRS = [
+    _ANDROID_SCREENSHOT_DIRS = [
         "/sdcard/Pictures/Screenshots",
         "/sdcard/DCIM/Screenshots",
+        "/sdcard/Movies/Screenshots",
+    ]
+    _ANDROID_RECORDING_DIRS = [
         "/sdcard/DCIM/Screen recordings",
         "/sdcard/Movies/Screen recordings",
         "/sdcard/Pictures/Screen recordings",
-        "/sdcard/Movies/Screenshots",
+        "/sdcard/DCIM/ScreenRecordings",
+        "/sdcard/Movies",
     ]
 
-    def pull_media(self, device: Device, dest_root: str, progress=None) -> dict:
-        """디바이스의 스크린샷/녹화영상을 dest_root로 복사"""
+    def pull_media(self, device: Device, dest_dir: str, progress=None) -> dict:
+        """가장 최근 스크린샷 1개 + 최근 녹화영상 1개를 dest_dir(다운로드 폴더)로 복사"""
         if device.platform == Platform.ANDROID:
-            return self._pull_android_media(device.id, dest_root, progress)
-        return self._pull_ios_media(device.id, dest_root, progress)
+            return self._pull_android_latest(device, dest_dir, progress)
+        return self._pull_ios_latest(device, dest_dir, progress)
+
+    @staticmethod
+    def _unique_dest(dest_dir: Path, filename: str) -> Path:
+        target = dest_dir / filename
+        if not target.exists():
+            return target
+        stem, suffix = Path(filename).stem, Path(filename).suffix
+        i = 1
+        while True:
+            cand = dest_dir / f"{stem} ({i}){suffix}"
+            if not cand.exists():
+                return cand
+            i += 1
+
+    # ── Android ──
 
     def _adb_dir_exists(self, device_id: str, path: str) -> bool:
         try:
@@ -554,58 +578,129 @@ class DeviceManager:
         except Exception:
             return False
 
-    def _pull_android_media(self, device_id: str, dest_root: str, progress=None) -> dict:
-        if not self._adb_path:
-            return {"ok": False, "error": "adb를 찾을 수 없습니다", "count": 0}
-
-        dest = Path(dest_root)
-        dest.mkdir(parents=True, exist_ok=True)
-        found_dirs = 0
-
-        for rdir in self._ANDROID_MEDIA_DIRS:
+    def _adb_newest_file(self, device_id: str, dirs: list[str], exts: set[str]) -> Optional[tuple[str, int]]:
+        """여러 후보 디렉터리에서 가장 최근에 수정된 파일의 (원격경로, mtime) 반환"""
+        candidates: list[str] = []
+        for rdir in dirs:
             if not self._adb_dir_exists(device_id, rdir):
                 continue
-            found_dirs += 1
-            if progress:
-                progress(f"{rdir} 복사 중...")
             try:
-                _run_sync(
-                    [self._adb_path, "-s", device_id, "pull", "-a", rdir, str(dest)],
-                    timeout=1800,
-                )
+                r = _run_sync([self._adb_path, "-s", device_id, "shell", "ls", "-t", "-1", rdir], timeout=15)
             except Exception:
-                pass
+                continue
+            if r.returncode != 0:
+                continue
+            for line in r.stdout.splitlines():
+                name = line.strip()
+                if not name or name in (".", ".."):
+                    continue
+                if Path(name).suffix.lower() in exts:
+                    candidates.append(rdir.rstrip("/") + "/" + name)
+                    break  # ls -t 정렬: 첫 매칭이 해당 디렉터리 최신
 
-        count = self._count_media_files(dest)
-        if found_dirs == 0:
-            return {"ok": True, "count": 0, "path": str(dest),
-                    "note": "스크린샷/녹화영상 폴더를 찾지 못했습니다"}
-        return {"ok": True, "count": count, "path": str(dest)}
+        best = None
+        for rpath in candidates:
+            mtime = self._adb_mtime(device_id, rpath)
+            if best is None or mtime > best[1]:
+                best = (rpath, mtime)
+        return best
 
-    def _pull_ios_media(self, device_id: str, dest_root: str, progress=None) -> dict:
+    def _adb_mtime(self, device_id: str, rpath: str) -> int:
+        try:
+            r = _run_sync([self._adb_path, "-s", device_id, "shell", "stat", "-c", "%Y", rpath], timeout=10)
+            return int(r.stdout.strip())
+        except Exception:
+            return 0
+
+    def _adb_pull_file(self, device_id: str, rpath: str, dest_dir: Path, prefix: str) -> Optional[str]:
+        filename = f"{prefix}{Path(rpath).name}" if prefix else Path(rpath).name
+        local = self._unique_dest(dest_dir, filename)
+        try:
+            r = _run_sync([self._adb_path, "-s", device_id, "pull", rpath, str(local)], timeout=600)
+            if local.exists():
+                return local.name
+            _ = r
+        except Exception:
+            pass
+        return None
+
+    def _pull_android_latest(self, device: Device, dest_dir: str, progress=None) -> dict:
+        if not self._adb_path:
+            return {"ok": False, "error": "adb를 찾을 수 없습니다"}
+
+        dest = Path(dest_dir)
+        dest.mkdir(parents=True, exist_ok=True)
+        prefix = f"{_safe_prefix(device.name)}_"
+
+        shot_name = rec_name = None
+
+        if progress:
+            progress("최근 스크린샷 찾는 중...")
+        shot = self._adb_newest_file(device.id, self._ANDROID_SCREENSHOT_DIRS, MEDIA_IMAGE_EXTS)
+        if shot:
+            if progress:
+                progress("스크린샷 복사 중...")
+            shot_name = self._adb_pull_file(device.id, shot[0], dest, prefix)
+
+        if progress:
+            progress("최근 녹화영상 찾는 중...")
+        rec = self._adb_newest_file(device.id, self._ANDROID_RECORDING_DIRS, MEDIA_VIDEO_EXTS)
+        if rec:
+            if progress:
+                progress("녹화영상 복사 중...")
+            rec_name = self._adb_pull_file(device.id, rec[0], dest, prefix)
+
+        return {
+            "ok": True, "path": str(dest),
+            "screenshot": shot_name, "recording": rec_name,
+            "count": sum(1 for x in (shot_name, rec_name) if x),
+        }
+
+    # ── iOS ──
+
+    def _pull_ios_latest(self, device: Device, dest_dir: str, progress=None) -> dict:
         if not self._tidevice_available:
-            return {"ok": False, "error": "tidevice가 설치되지 않았습니다", "count": 0}
+            return {"ok": False, "error": "tidevice가 설치되지 않았습니다"}
 
-        dest = Path(dest_root)
+        dest = Path(dest_dir)
         dest.mkdir(parents=True, exist_ok=True)
         try:
             from tidevice._usbmux import Usbmux
             from tidevice._device import BaseDevice
             um = Usbmux()
-            dev = BaseDevice(device_id, um)
+            dev = BaseDevice(device.id, um)
             sync = dev.sync
         except Exception as e:
-            return {"ok": False, "error": f"디바이스 연결 실패: {e}", "count": 0}
+            return {"ok": False, "error": f"디바이스 연결 실패: {e}"}
 
-        counter = {"n": 0}
+        if progress:
+            progress("미디어 목록 검색 중...")
+        best_shot = {"path": None, "mtime": -1.0}
+        best_rec = {"path": None, "mtime": -1.0}
         try:
-            self._ios_pull_dir(sync, "/DCIM", dest, counter, progress)
+            self._ios_scan_latest(sync, "/DCIM", best_shot, best_rec)
         except Exception as e:
-            if counter["n"] == 0:
-                return {"ok": False, "error": str(e), "count": 0}
-        return {"ok": True, "count": counter["n"], "path": str(dest)}
+            return {"ok": False, "error": str(e)}
 
-    def _ios_pull_dir(self, sync, remote_dir: str, local_dir: Path, counter: dict, progress=None):
+        prefix = f"{_safe_prefix(device.name)}_"
+        shot_name = rec_name = None
+
+        if best_shot["path"]:
+            if progress:
+                progress("스크린샷 복사 중...")
+            shot_name = self._ios_pull_one(sync, best_shot["path"], dest, prefix)
+        if best_rec["path"]:
+            if progress:
+                progress("녹화영상 복사 중...")
+            rec_name = self._ios_pull_one(sync, best_rec["path"], dest, prefix)
+
+        return {
+            "ok": True, "path": str(dest),
+            "screenshot": shot_name, "recording": rec_name,
+            "count": sum(1 for x in (shot_name, rec_name) if x),
+        }
+
+    def _ios_scan_latest(self, sync, remote_dir: str, best_shot: dict, best_rec: dict):
         try:
             names = sync.listdir(remote_dir)
         except Exception:
@@ -617,29 +712,32 @@ class DeviceManager:
             except Exception:
                 continue
             if info.is_dir():
-                self._ios_pull_dir(sync, rpath, local_dir / name, counter, progress)
-            else:
-                if Path(name).suffix.lower() not in MEDIA_EXTS:
-                    continue
-                local_dir.mkdir(parents=True, exist_ok=True)
-                lpath = local_dir / name
-                try:
-                    with open(lpath, "wb") as f:
-                        for chunk in sync.iter_content(rpath):
-                            f.write(chunk)
-                    counter["n"] += 1
-                    if progress and counter["n"] % 10 == 0:
-                        progress(f"{counter['n']}개 복사됨...")
-                except Exception:
-                    try:
-                        lpath.unlink(missing_ok=True)
-                    except Exception:
-                        pass
+                self._ios_scan_latest(sync, rpath, best_shot, best_rec)
+                continue
+            ext = Path(name).suffix.lower()
+            try:
+                mtime = info.st_mtime.timestamp()
+            except Exception:
+                mtime = 0.0
+            # iOS 스크린샷은 PNG로 저장됨
+            if ext == ".png":
+                if mtime > best_shot["mtime"]:
+                    best_shot["path"], best_shot["mtime"] = rpath, mtime
+            elif ext in MEDIA_VIDEO_EXTS:
+                if mtime > best_rec["mtime"]:
+                    best_rec["path"], best_rec["mtime"] = rpath, mtime
 
-    @staticmethod
-    def _count_media_files(root: Path) -> int:
-        count = 0
-        for p in root.rglob("*"):
-            if p.is_file() and p.suffix.lower() in MEDIA_EXTS:
-                count += 1
-        return count
+    def _ios_pull_one(self, sync, rpath: str, dest_dir: Path, prefix: str) -> Optional[str]:
+        filename = f"{prefix}{Path(rpath).name}" if prefix else Path(rpath).name
+        local = self._unique_dest(dest_dir, filename)
+        try:
+            with open(local, "wb") as f:
+                for chunk in sync.iter_content(rpath):
+                    f.write(chunk)
+            return local.name
+        except Exception:
+            try:
+                local.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return None

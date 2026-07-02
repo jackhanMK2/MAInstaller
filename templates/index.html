@@ -501,17 +501,18 @@ function handleWSMessage(data) {
     state.installing = false;
     updateButtons();
   } else if (data.type === 'media_start') {
-    log(`📥 ${data.device_name}: 미디어 가져오기 시작...`, 'warn');
+    log(`📥 ${data.device_name}: 최근 스크린샷/녹화영상 가져오기 시작...`, 'warn');
     setMediaBtnState(data.device_id, true, '가져오는 중...');
   } else if (data.type === 'media_progress') {
     setMediaBtnState(data.device_id, true, '가져오는 중...');
     log(`⏳ ${data.device_name}: ${data.message}`, 'warn');
   } else if (data.type === 'media_done') {
     if (data.count > 0) {
-      log(`✅ ${data.device_name}: ${data.count}개 파일 복사 완료 → ${data.path}`, 'success');
+      if (data.screenshot) log(`🖼️ 스크린샷: ${data.screenshot}`, 'success');
+      if (data.recording) log(`🎬 녹화영상: ${data.recording}`, 'success');
+      log(`✅ ${data.device_name}: ${data.count}개 파일을 다운로드 폴더로 복사 완료`, 'success');
     } else {
-      const note = data.note ? ` (${data.note})` : '';
-      log(`ℹ️ ${data.device_name}: 복사할 미디어가 없습니다${note}`, 'warn');
+      log(`ℹ️ ${data.device_name}: 복사할 스크린샷/녹화영상이 없습니다`, 'warn');
     }
     setMediaBtnState(data.device_id, false);
   } else if (data.type === 'media_error') {
